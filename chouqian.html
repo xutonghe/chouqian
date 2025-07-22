@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>2025山东石油技能认定 - 随机抽签</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdn.jsdelivr.net/npm/font-awesome@4.7.0/css/font-awesome.min.css" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#E63946', // 红包红色
+                        secondary: '#FFF1F2',
+                        neutral: '#F8F9FA'
+                    }
+                }
+            }
+        }
+    </script>
+    <style type="text/tailwindcss">
+        @layer utilities {
+            .红包阴影 {
+                box-shadow: 0 4px 12px rgba(230, 57, 70, 0.2);
+            }
+            .红包动画 {
+                transition: all 0.3s ease;
+            }
+            .红包动画:hover:not(.已选中) {
+                transform: translateY(-5px);
+                box-shadow: 0 8px 16px rgba(230, 57, 70, 0.3);
+            }
+            .揭晓动画 {
+                animation: reveal 0.5s ease-out;
+            }
+            @keyframes reveal {
+                0% { transform: scale(0.8); opacity: 0.5; }
+                50% { transform: scale(1.1); }
+                100% { transform: scale(1); opacity: 1; }
+            }
+            .结果动画 {
+                animation: result-appear 0.5s ease-out;
+            }
+            @keyframes result-appear {
+                0% { opacity: 0; transform: translateY(10px); }
+                100% { opacity: 1; transform: translateY(0); }
+            }
+        }
+    </style>
+</head>
+<body class="bg-gradient-to-br from-pink-50 to-white min-h-screen">
+    <div class="container mx-auto px-4 py-8 max-w-6xl">
+        <!-- 标题区域 -->
+        <header class="text-center mb-8 mt-4">
+            <h1 class="text-[clamp(1.8rem,5vw,2.5rem)] font-bold text-gray-800 mb-2">
+                2025山东石油技能认定
+            </h1>
+            <p class="text-gray-600">随机抽签（点击对应地市红包）</p>
+            <div class="h-1 w-40 bg-primary mx-auto rounded-full mt-3"></div>
+        </header>
+
+        <!-- 主要内容区 -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <!-- 左侧：红包选择区 -->
+            <div class="lg:col-span-2">
+                <!-- 状态提示 -->
+                <div class="bg-white rounded-lg p-4 shadow mb-6 text-center">
+                    <p id="statusText" class="text-gray-700">
+                        <<i class="fa fa-info-circle text-primary mr-2"></</i>请点击你的地市红包查看抽签顺序，选完后不可更改
+                    </p>
+                </div>
+
+                <!-- 红包选择区 -->
+                <div id="redPacketContainer" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+                    <!-- 红包将动态生成 -->
+                </div>
+            </div>
+
+            <!-- 右侧：已抽签结果 -->
+            <div class="lg:col-span-1">
+                <div class="bg-white rounded-xl shadow-lg p-6 h-full">
+                    <h2 class="text-xl font-semibold text-gray-700 mb-4 flex items-center">
+                        <<i class="fa fa-list-ol text-primary mr-2"></</i>
+                        已抽签顺序
+                    </h2>
+                    
+                    <div id="resultContainer" class="space-y-3 max-h-[calc(100vh-200px)] overflow-y-auto pr-2">
+                        <div class="text-center py-8 text-gray-400 border-2 border-dashed border-gray-200 rounded-lg">
+                            <<i class="fa fa-clock-o text-3xl mb-2"></</i>
+                            <p>等待抽签开始</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <footer class="mt-10 text-center text-gray-500 text-sm">
+            <p>点击对应地市红包查看随机顺序 | 刷新页面可查看最新状态</p>
+        </footer>
+    </div>
+
+    <script>
+        // 地市列表（保持原始顺序）
+        const cities = [
+            '济南', '青岛', '淄博', '枣庄', '东营', 
+            '烟台', '潍坊', '济宁', '泰安', '威海', 
+            '日照', '莱芜', '滨州', '德州', '聊城', 
+            '临沂', '菏泽'
+        ];
+        
+        // 随机排序的地市（格式: {city: '济南', order: 5, revealed: false, drawOrder: null}）
+        let randomizedCities = [];
+        
+        // 记录当前用户是否已选择
+        let userSelected = false;
+        let selectedCity = null;
+        let selectedOrder = null;
+        
+        // 抽签顺序计数器
+        let drawOrderCounter = 0;
+        
+        // DOM元素
+        const redPacketContainer = document.getElementById('redPacketContainer');
+        const resultContainer = document.getElementById('resultContainer');
+        const statusText = document.getElementById('statusText');
+        
+        // 初始化Socket（用于多人同步，部署后替换为你的服务器地址）
+        const socket = io('https://socket.io/demos/chat/'); // 示例服务器，实际需替换
+        
+        // 初始化
+        function init() {
+            // 生成随机顺序
+            generateRandomOrder();
+            
+            // 初始化红包
+            initRedPackets();
+            
+            // 接收服务器同步的数据
+            if (socket) {
+                socket.on('updateRandomOrder', (data) => {
+                    randomizedCities = data.randomizedCities;
+                    drawOrderCounter = data.drawOrderCounter;
+                    updateDisplay();
+                });
+            }
+        }
+        
+        // 生成随机顺序
+        function generateRandomOrder() {
+            // 复制原始地市列表
+            const shuffled = [...cities];
+            
+            // Fisher-Yates 洗牌算法
+            for (let i = shuffled.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+            }
+            
+            // 为每个地市分配随机顺序（保持原始城市列表的顺序，只打乱对应的序号）
+            randomizedCities = cities.map((city) => {
+                const randomOrder = shuffled.indexOf(city) + 1;
+                return {
+                    city,
+                    order: randomOrder,
+                    revealed: false, // 是否已揭晓
+                    drawOrder: null  // 抽签顺序（点击顺序）
+                };
+            });
+            
+            // 发送到服务器同步给所有人（如果有Socket连接）
+            if (socket) {
+                socket.emit('newRandomOrder', { randomizedCities, drawOrderCounter });
+            }
+        }
+        
+        // 初始化红包
+        function initRedPackets() {
+            redPacketContainer.innerHTML = '';
+            
+            randomizedCities.forEach((item, index) => {
+                const redPacket = document.createElement('div');
+                
+                redPacket.className = `
+                    rounded-xl p-4 flex flex-col items-center justify-center cursor-pointer
+                    ${item.revealed ? 'bg-gray-100 cursor-not-allowed' : 'bg-primary text-white hover:bg-primary/90'}
+                    红包阴影 红包动画 h-32
+                `;
+                
+                redPacket.innerHTML = `
+                    <<i class="fa ${item.revealed ? 'fa-check-circle text-primary' : 'fa-envelope-open text-2xl mb-2'}"></</i>
+                    <p class="${item.revealed ? 'text-gray-500' : 'font-medium text-lg'}">
+                        ${item.revealed ? `第${item.order}位` : item.city}
+                    </p>
+                `;
+                
+                // 未揭晓的红包可点击
+                if (!item.revealed && !userSelected) {
+                    redPacket.addEventListener('click', () => revealCity(index));
+                }
+                
+                redPacketContainer.appendChild(redPacket);
+            });
+        }
+        
+        // 揭晓地市结果
+        function revealCity(index) {
+            // 标记为已揭晓，并记录抽签顺序
+            drawOrderCounter++;
+            randomizedCities[index].revealed = true;
+            randomizedCities[index].drawOrder = drawOrderCounter;
+            userSelected = true;
+            selectedCity = randomizedCities[index].city;
+            selectedOrder = randomizedCities[index].order;
+            
+            // 更新显示
+            updateDisplay();
+            
+            // 发送到服务器同步给所有人（如果有Socket连接）
+            if (socket) {
+                socket.emit('revealCity', { randomizedCities, drawOrderCounter });
+            }
+            
+            // 显示揭晓动画
+            const revealedEl = redPacketContainer.children[index];
+            revealedEl.classList.add('揭晓动画');
+            setTimeout(() => revealedEl.classList.remove('揭晓动画'), 500);
+            
+            // 更新状态提示
+            statusText.innerHTML = `<<i class="fa fa-check-circle text-green-500 mr-2"></</i>${selectedCity} 的抽签顺序是：第${selectedOrder}位`;
+        }
+        
+        // 更新显示
+        function updateDisplay() {
+            initRedPackets();
+            updateResults();
+        }
+        
+        // 更新已揭晓结果
+        function updateResults() {
+            const revealed = randomizedCities.filter(item => item.revealed);
+            
+            if (revealed.length === 0) {
+                resultContainer.innerHTML = `
+                    <div class="text-center py-8 text-gray-400 border-2 border-dashed border-gray-200 rounded-lg">
+                        <<i class="fa fa-clock-o text-3xl mb-2"></</i>
+                        <p>等待抽签开始</p>
+                    </div>
+                `;
+                return;
+            }
+            
+            // 按抽签顺序排序（drawOrder）
+            revealed.sort((a, b) => a.drawOrder - b.drawOrder);
+            
+            resultContainer.innerHTML = '';
+            revealed.forEach((item, i) => {
+                const resultItem = document.createElement('div');
+                resultItem.className = 'bg-secondary rounded-lg p-3 border-l-4 border-primary result动画';
+                resultItem.style.animationDelay = `${i * 0.1}s`;
+                resultItem.innerHTML = `
+                    <div class="flex justify-between items-center">
+                        <div>
+                            <span class="inline-block w-6 h-6 bg-primary text-white text-xs rounded-full flex items-center justify-center mr-2">${item.drawOrder}</span>
+                            <span class="font-medium">${item.city}</span>
+                        </div>
+                        <span class="bg-primary/10 text-primary text-xs px-2 py-0.5 rounded-full">
+                            第${item.order}位
+                        </span>
+                    </div>
+                `;
+                resultContainer.appendChild(resultItem);
+            });
+        }
+        
+        // 初始化
+        init();
+    </script>
+</body>
+</html>
